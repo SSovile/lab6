@@ -1,9 +1,10 @@
-from flask import Flask, request, jsonify, abort
+from flask import Flask, request, abort
 from flask_sqlalchemy import SQLAlchemy
 from flask_marshmallow import Marshmallow
-import os
+from marshmallow import fields, ValidationError
 
 app = Flask(__name__)
+
 app.config['SQLALCHEMY_DATABASE_URI'] = "mysql+mysqlconnector://vlada:VLVL@localhost/iot-test-db"
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
@@ -22,31 +23,20 @@ class Door(db.Model):
 
 
 class DoorSchema(ma.Schema):
-    class Meta:
-        fields = ('id', 'ser_num', 'material')
+    id = fields.Int()
+    ser_num = fields.Int(required=True)
+    material = fields.String(required=True)
 
 
-door_schema = DoorSchema()
-doors_schema = DoorSchema(many=True)
+door_schema = DoorSchema(exclude=["id"])
+doors_schema = DoorSchema(only=["id", "ser_num", "material"], many=True)
 
-
-@app.route("/door", methods=["POST"])
-def add_door():
-    ser_num = request.json['ser_num']
-    material = request.json['material']
-
-    new_door = Door(ser_num, material)
-
-    db.session.add(new_door)
-    db.session.commit()
-
-    return door_schema.jsonify(new_door)
 
 @app.route("/door", methods=["GET"])
 def get_door():
     all_doors = Door.query.all()
-    result = doors_schema.dump(all_doors)
-    return jsonify(result)
+    return doors_schema.jsonify(all_doors)
+
 
 @app.route("/door/<id>", methods=["GET"])
 def show_door(id):
@@ -55,19 +45,32 @@ def show_door(id):
         return abort(404)
     return door_schema.jsonify(door)
 
+
+@app.route("/door", methods=["POST"])
+def add_door():
+    try:
+        received_deserialized_values = door_schema.load(request.json)
+    except ValidationError:
+        return abort(400)
+    new_incoming_door = Door(**received_deserialized_values)
+    db.session.add(new_incoming_door)
+    db.session.commit()
+    return door_schema.jsonify(new_incoming_door), 201
+
+
 @app.route("/door/<id>", methods=["PUT"])
 def door_update(id):
     door = Door.query.get(id)
     if not door:
         return abort(404)
-    ser_num = request.json['ser_num']
-    material = request.json['material']
-
-    door.material = material
-    door.ser_num = ser_num
-
+    try:
+        new_deserialized_values = door_schema.load(request.json)
+    except ValidationError:
+        return abort(400)
+    door.__init__(**new_deserialized_values)
     db.session.commit()
     return door_schema.jsonify(door)
+
 
 @app.route("/door/<id>", methods=["DELETE"])
 def door_delete(id):
@@ -78,6 +81,7 @@ def door_delete(id):
     db.session.commit()
 
     return door_schema.jsonify(door)
+
 
 if __name__ == '__main__':
     app.run(debug=True)
